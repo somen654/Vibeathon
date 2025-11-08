@@ -1,0 +1,27 @@
+# FarmMind AI - Backend Dependencies
+
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# AI and LangChain
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-core>=0.1.0
+openai>=1.0.0
+
+# Image processing (for plant health)
+Pillow==10.1.0
+
+# Optional: YOLOv8 for advanced plant disease detection
+# ultralytics==8.0.196
+
+# Database (SQLite is built-in, but we can add SQLAlchemy for future)
+# sqlalchemy==2.0.23
+
+# CORS and utilities
+pydantic==2.5.0
+python-dotenv==1.0.0
+requests>=2.31.0
+
