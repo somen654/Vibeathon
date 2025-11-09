@@ -169,7 +169,7 @@ const Dashboard = ({ apiUrl }) => {
                   : 'Some sensor readings are outside optimal ranges.'}
               </p>
               <div className="mt-3 space-y-1 text-sm">
-                {sensorData.temperature < 10 || sensorData.temperature > 35 && (
+                   {(sensorData.temperature < 10 || sensorData.temperature > 35) && (
                   <p className="text-red-700">🌡️ Temperature: {sensorData.temperature}°C (Optimal: 18-25°C)</p>
                 )}
                 {sensorData.soil_moisture < 30 && (
