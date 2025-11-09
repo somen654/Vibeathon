@@ -12,7 +12,7 @@ langchain-core>=0.1.0
 openai>=1.0.0
 
 # Image processing (for plant health)
-Pillow==10.1.0
+Pillow>=10.4.0  # Updated to support Python 3.13
 
 # Optional: YOLOv8 for advanced plant disease detection
 # ultralytics==8.0.196
@@ -24,4 +24,3 @@ Pillow==10.1.0
 pydantic==2.5.0
 python-dotenv==1.0.0
 requests>=2.31.0
-
