@@ -73,6 +73,10 @@ const ChatBot = ({ apiUrl }) => {
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
 
     try {
+      // Create an AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
       const response = await fetch(`${apiUrl}/ai/farmchat`, {
         method: 'POST',
         headers: {
@@ -82,18 +86,32 @@ const ChatBot = ({ apiUrl }) => {
           message: userMessage,
           conversation_id: 'default'
         }),
+        signal: controller.signal,
       });
 
-      if (!response.ok) throw new Error('Failed to get response');
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to get response: ${response.status} - ${errorText}`);
+      }
       const data = await response.json();
 
       // Add assistant response to chat
       setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
     } catch (error) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again or check your API connection.'
-      }]);
+      console.error('Chat error:', error);
+      if (error.name === 'AbortError') {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: 'Request timed out. The AI is taking too long to respond. Please try again or check if Ollama is running properly.'
+        }]);
+      } else {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Sorry, I encountered an error: ${error.message}. Please try again or check your API connection.`
+        }]);
+      }
     } finally {
       setLoading(false);
     }

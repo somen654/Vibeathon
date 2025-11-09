@@ -1,18 +1,20 @@
 """
 Farm Chat Route
-AI-powered farming assistant chat interface using free Hugging Face API
+AI-powered farming assistant chat interface using Ollama (local LLM)
 """
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict
 import requests
 import json
+import os
 
 router = APIRouter()
 
-# Hugging Face Inference API (FREE - no API key needed for public models)
-HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+# Ollama Configuration
+OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama2:latest")  # Default model, can be changed to mistral, llama2:latest, etc.
 
 
 class ChatMessage(BaseModel):
@@ -75,98 +77,219 @@ def get_smart_response(user_message: str) -> str:
     return "I'm FarmGPT, your rooftop farming assistant! I can help with watering, fertilizing, pests, sunlight, harvesting, soil, temperature, spacing, and disease prevention. What specific question do you have about your rooftop farm?"
 
 
-def call_huggingface_api(user_message: str) -> Optional[str]:
-    """Call Hugging Face Inference API (FREE - no key needed)"""
+def call_ollama_api(user_message: str, conversation_history: Optional[List[Dict[str, str]]] = None) -> Optional[str]:
+    """
+    Call Ollama API for chat completion
+    Ollama must be running locally at http://localhost:11434 (default)
+    """
+    import logging
+    import sys
+    logger = logging.getLogger(__name__)
+    
     try:
-        # Format prompt for Mistral instruct model
-        prompt = f"""<s>[INST] You are FarmGPT, a smart rooftop farming mentor. 
-Answer the following question about urban/rooftop farming in 2-3 clear, practical sentences. 
-Be friendly and encouraging. Focus on actionable advice.
-
-Question: {user_message}
-
-Answer: [/INST]"""
+        # Format prompt for farming assistant
+        system_prompt = """You are FarmGPT, a knowledgeable and friendly rooftop farming assistant. 
+Your role is to help users with urban farming, rooftop gardening, and plant care.
+Provide practical, actionable advice in 2-3 clear sentences. Be encouraging and helpful.
+Focus on topics like: watering, fertilizing, pest control, harvesting, soil management, 
+temperature control, spacing, and disease prevention."""
         
+        # Build messages array for chat completion
+        messages = [
+            {"role": "system", "content": system_prompt},
+        ]
+        
+        # Add conversation history if available
+        if conversation_history:
+            messages.extend(conversation_history[-5:])  # Keep last 5 messages for context
+        
+        # Add current user message
+        messages.append({"role": "user", "content": user_message})
+        
+        # Prepare Ollama API request
         payload = {
-            "inputs": prompt,
-            "parameters": {
-                "max_new_tokens": 150,
+            "model": OLLAMA_MODEL,
+            "messages": messages,
+            "stream": False,
+            "options": {
                 "temperature": 0.7,
-                "return_full_text": False
+                "num_predict": 200,  # Ollama uses num_predict instead of max_tokens
             }
         }
         
+        # Call Ollama API
+        ollama_url = f"{OLLAMA_API_URL}/api/chat"
+        logger.info(f"Calling Ollama at {ollama_url} with model {OLLAMA_MODEL}")
+        
         response = requests.post(
-            HUGGINGFACE_API_URL,
+            ollama_url,
             headers={"Content-Type": "application/json"},
             json=payload,
-            timeout=15
+            timeout=15  # Reduced timeout - 15 seconds should be enough
         )
+        
+        logger.info(f"Ollama response status: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            # Handle different response formats
-            generated_text = None
+            logger.info(f"Ollama response keys: {result.keys()}")
             
-            if isinstance(result, list) and len(result) > 0:
-                # Format: [{"generated_text": "..."}]
-                generated_text = result[0].get("generated_text", "")
-            elif isinstance(result, dict):
-                # Format: {"generated_text": "..."}
-                generated_text = result.get("generated_text", "")
-            
-            if generated_text:
-                # Clean up the response
-                generated_text = generated_text.strip()
-                # Remove prompt artifacts
-                if "[/INST]" in generated_text:
-                    generated_text = generated_text.split("[/INST]")[-1].strip()
-                if "[INST]" in generated_text:
-                    generated_text = generated_text.split("[INST]")[-1].strip()
-                # Remove any remaining tags
-                generated_text = generated_text.replace("<s>", "").replace("</s>", "").strip()
-                
-                if len(generated_text) > 20:  # Only return if we got meaningful text
+            # Ollama returns: {"message": {"role": "assistant", "content": "..."}, ...}
+            if "message" in result and "content" in result["message"]:
+                generated_text = result["message"]["content"].strip()
+                logger.info(f"Generated text length: {len(generated_text)}")
+                if len(generated_text) > 10:  # Only return if we got meaningful text
                     return generated_text
-        elif response.status_code == 503:
-            # Model is loading - use fallback
+                else:
+                    logger.warning(f"Generated text too short: {generated_text}")
+            else:
+                logger.warning(f"Unexpected response format: {result}")
+        elif response.status_code == 404:
+            # Model not found - might need to pull it
+            error_msg = f"Ollama model '{OLLAMA_MODEL}' not found. Run: ollama pull {OLLAMA_MODEL}"
+            logger.error(error_msg)
+            print(f"Warning: {error_msg}")
+            return None
+        else:
+            logger.error(f"Ollama API returned status {response.status_code}: {response.text}")
             return None
         return None
-    except requests.exceptions.Timeout:
+    except requests.exceptions.ConnectionError as e:
+        # Ollama is not running
+        error_msg = f"Cannot connect to Ollama at {OLLAMA_API_URL}. Make sure Ollama is running."
+        logger.error(error_msg)
+        print(f"Warning: {error_msg}")
+        return None
+    except requests.exceptions.Timeout as e:
         # API timeout - use fallback
+        error_msg = "Ollama request timed out after 15 seconds"
+        logger.error(error_msg)
+        print(f"Warning: {error_msg}", file=sys.stderr, flush=True)
         return None
     except Exception as e:
         # Any other error - use fallback
+        error_msg = f"Ollama API error: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        print(f"Warning: {error_msg}")
         return None
+
+
+def check_ollama_available() -> bool:
+    """Check if Ollama is running and accessible"""
+    try:
+        response = requests.get(f"{OLLAMA_API_URL}/api/tags", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
 
 
 @router.post("/farmchat", response_model=ChatResponse)
 async def chat_with_farm_gpt(message: ChatMessage):
     """
     Chat with FarmGPT - your friendly farming assistant
-    Uses free Hugging Face API, falls back to smart responses
+    Uses Ollama (local LLM), falls back to smart responses if Ollama is not available
     """
+    import logging
+    import sys
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+    
+    logger = logging.getLogger(__name__)
+    
+    # Print to console immediately for debugging
+    print(f"\n{'='*60}", file=sys.stderr, flush=True)
+    print(f"🔵 POST /ai/farmchat - Message received!", file=sys.stderr, flush=True)
+    print(f"Message: {message.message[:100]}", file=sys.stderr, flush=True)
+    print(f"{'='*60}\n", file=sys.stderr, flush=True)
+    
     try:
-        # Try Hugging Face API first (FREE)
-        ai_response = call_huggingface_api(message.message)
+        logger.info(f"Received chat message: {message.message[:50]}...")
         
-        if ai_response:
-            return ChatResponse(
-                response=ai_response,
-                conversation_id=message.conversation_id or "default"
-            )
+        # Quick check if Ollama is available (with short timeout)
+        print("🔍 Checking Ollama availability...", file=sys.stderr, flush=True)
+        ollama_available = check_ollama_available()
+        print(f"📊 Ollama available: {ollama_available}", file=sys.stderr, flush=True)
+        logger.info(f"Ollama available: {ollama_available}")
         
-        # Fallback to smart keyword-based responses
+        # If Ollama is available, try to get response with timeout
+        if ollama_available:
+            print(f"🤖 Attempting Ollama API call with model: {OLLAMA_MODEL}", file=sys.stderr, flush=True)
+            logger.info("Attempting to call Ollama API...")
+            
+            # Run Ollama call in thread pool with timeout to prevent blocking
+            try:
+                loop = asyncio.get_event_loop()
+                with ThreadPoolExecutor() as executor:
+                    # Set a 20 second timeout for the Ollama call
+                    ai_response = await asyncio.wait_for(
+                        loop.run_in_executor(executor, call_ollama_api, message.message),
+                        timeout=20.0
+                    )
+                
+                if ai_response:
+                    print(f"✅ Ollama returned response (length: {len(ai_response)})", file=sys.stderr, flush=True)
+                    logger.info("Ollama API returned response successfully")
+                    return ChatResponse(
+                        response=ai_response,
+                        conversation_id=message.conversation_id or "default"
+                    )
+                else:
+                    print("⚠️ Ollama returned None, using fallback", file=sys.stderr, flush=True)
+                    logger.warning("Ollama API did not return a response, using fallback")
+            except asyncio.TimeoutError:
+                print("⏱️ Ollama call timed out after 20 seconds, using fallback", file=sys.stderr, flush=True)
+                logger.warning("Ollama API call timed out, using fallback")
+            except Exception as e:
+                print(f"❌ Ollama call error: {str(e)}", file=sys.stderr, flush=True)
+                logger.error(f"Error calling Ollama: {str(e)}", exc_info=True)
+        else:
+            print("⚠️ Ollama not available, using fallback immediately", file=sys.stderr, flush=True)
+            logger.warning("Ollama is not available, using fallback")
+        
+        # Fallback to smart keyword-based responses (always fast)
+        print("📝 Generating fallback response...", file=sys.stderr, flush=True)
         response_text = get_smart_response(message.message)
+        # Add a note that Ollama is not available
+        if not ollama_available:
+            response_text += "\n\n(Note: Running in fallback mode. To use AI, make sure Ollama is running locally.)"
+        
+        print(f"✅ Returning fallback response (length: {len(response_text)})", file=sys.stderr, flush=True)
         return ChatResponse(
             response=response_text,
             conversation_id=message.conversation_id or "default"
         )
         
     except Exception as e:
-        # Final fallback
+        # Log the error
+        error_str = str(e)
+        print(f"\n❌ ERROR: {error_str}", file=sys.stderr, flush=True)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        logger.error(f"Error in chat_with_farm_gpt: {error_str}", exc_info=True)
+        
+        # Final fallback - always return something
+        error_msg = get_smart_response(message.message)
+        if not check_ollama_available():
+            error_msg += "\n\n(Note: Ollama is not available. Install and start Ollama to enable AI responses.)"
+        else:
+            error_msg += f"\n\n(Note: Error occurred: {error_str})"
+        
+        print("✅ Returning error fallback response", file=sys.stderr, flush=True)
         return ChatResponse(
-            response=get_smart_response(message.message),
+            response=error_msg,
             conversation_id=message.conversation_id or "default"
         )
+
+
+@router.get("/farmchat/status")
+async def get_chat_status():
+    """Check if Ollama is available and which model is configured"""
+    ollama_available = check_ollama_available()
+    return {
+        "ollama_available": ollama_available,
+        "ollama_url": OLLAMA_API_URL,
+        "ollama_model": OLLAMA_MODEL,
+        "status": "ready" if ollama_available else "fallback_mode",
+        "message": "Ollama is running" if ollama_available else "Ollama is not running - using fallback responses"
+    }
 
