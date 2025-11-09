@@ -7,7 +7,12 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 import os
-from PIL import Image
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    Image = None
 import io
 import base64
 import requests
@@ -155,9 +160,14 @@ def analyze_image_with_ollama_text(image_data: bytes) -> Optional[PlantHealthRes
     """
     Analyze plant image by describing it and asking Ollama to identify diseases
     """
+    if not PIL_AVAILABLE or Image is None:
+        # Skip image analysis if Pillow is not available
+        return None
+    
     try:
         # Analyze image characteristics
         image = Image.open(io.BytesIO(image_data))
+        # ... rest of existing code stays the same
         
         # Get basic image info
         width, height = image.size
@@ -382,8 +392,11 @@ async def analyze_plant_health(file: UploadFile = File(...)):
                     return ollama_text_result
         
         # Try YOLOv8 if available (legacy support)
-        if YOLO_AVAILABLE and model is not None:
-            print("🔍 Trying YOLOv8 analysis...", file=sys.stderr, flush=True)
+        # Try YOLOv8 if available (legacy support)
+            if YOLO_AVAILABLE and model is not None and PIL_AVAILABLE:
+    
+                print("🔍 Trying YOLOv8 analysis...", file=sys.stderr, flush=True)
+                
             try:
                 # Load image
                 image = Image.open(io.BytesIO(image_data))
