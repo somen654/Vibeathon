@@ -21,7 +21,7 @@ app = FastAPI(
 # Configure CORS to allow React frontend to connect
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # React dev servers
+    allow_origins=["*"],  # Allow all origins for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,7 +35,7 @@ app.include_router(growth_predictor.router, prefix="/ai", tags=["Growth Predicto
 app.include_router(farmchat.router, prefix="/ai", tags=["Farm Chat"])
 
 
-@app.get("/")
+@app.get("/api")
 async def root():
     """Health check endpoint"""
     return {
@@ -57,7 +57,11 @@ async def health():
     return {"status": "healthy"}
 
 
+# Serve React frontend static files (only if static directory exists)
+if os.path.exists("static"):
+    app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
